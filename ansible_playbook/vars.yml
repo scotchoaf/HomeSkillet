@@ -1,0 +1,15 @@
+# clear text test var
+provider:
+    ip_address: '192.168.55.136'
+    username: 'admin'
+    password: 'Clouds123'
+
+# skillet repo content for the playbook
+# for reference only as pointer to skillet content
+skillet_repo: 'https://github.com/PaloAltoNetworks/panos-logging-skillets.git'
+branch: 'master'
+skillet: 'cdl_global_config_panos_xml'
+
+# vars passed to the skillet
+skillet_vars:
+    cdl_region: 'americas'

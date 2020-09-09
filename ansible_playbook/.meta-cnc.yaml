@@ -1,0 +1,49 @@
+# skillet preamble information used by panhandler
+# ---------------------------------------------------------------------
+# unique snippet name
+name: cdl_global_config_playbook_script
+label: Cortex Data Lake global configuration with Ansible playbook
+description: Run a Cortex Data Lake (CDL) configuration Ansible playbook within a python virtual environment
+type: python3
+labels:
+  collection:
+    - CDL
+
+# ---------------------------------------------------------------------
+# end of preamble section
+
+# variables section
+# ---------------------------------------------------------------------
+variables:
+  # cortex data lake psk to generate service cert
+  - name: cdl_preshared_key
+    description: Cortext Data Lake PreShared Key for device onboarding
+    default: getMyKey
+    type_hint: text
+    help_text: this key is generated at apps.paloaltonetworks.com in the Cortex Data Lake app
+
+  # firewall ip and credentials to use as the provider input
+  - name: TARGET_IP
+    description: IP address of device to configure
+    default: 192.168.55.137
+    type_hint: text
+  - name: TARGET_USERNAME
+    description: admin username for this device
+    default: admin
+    type_hint: text
+  - name: TARGET_PASSWORD
+    description: admin password for this device
+    default:
+    type_hint: password
+# ---------------------------------------------------------------------
+# end of variables section
+
+# snippets section
+# ---------------------------------------------------------------------
+snippets:
+
+  - name: run_ansible_playbook
+    file: run_ansible_playbook.py
+    input_type: cli
+# ---------------------------------------------------------------------
+# end of snippets section

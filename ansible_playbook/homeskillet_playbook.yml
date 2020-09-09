@@ -1,0 +1,104 @@
+- name: load_L3_HomeSkillet
+  hosts: all
+  connection: local
+  gather_facts: False
+
+  collections:
+    - paloaltonetworks.panos
+    - nembery.skillet
+
+  tasks:
+    # currently using clear text vars for testing
+    - name: grab auth creds
+      include_vars: 'vars.yml'
+      no_log: 'yes'
+
+    - name: Ensure deps are available
+      # Ensure we have all the right requirements installed in this environment
+      pip:
+        name:
+          - pan-python
+          - pandevice
+          - xmltodict
+          - requests
+          - requests_toolbelt
+          - skilletlib
+
+    # check access to the system and pull a few values
+    - name: show system info
+      panos_op:
+        provider: '{{ provider }}'
+        cmd: 'show system info'
+      register: system_info
+      until: system_info is not failed
+      retries: 10
+      delay: 10
+
+    # json to dict to use in multiple places
+    - set_fact: system_info_json="{{ system_info.stdout | from_json }}"
+
+    # output software version for min version check
+    - name: software version
+      debug: msg='software version is {{ system_info_json.response.result.system['sw-version'] }}'
+
+    # stop playbook if sw version before 9.0.6
+    # this IS NOT working when using >= so have <= during testing until resolved - appears as reverse logic
+    - name: firewall version with CDL onboarding support
+      fail: msg="stop - NGFW sw version must be 9.0.6 or later"
+      when: system_info_json.response.result.system['sw-version'] is version('9.0.6', '<=')
+
+    # check serial number; may be used in vm-series testing as licensing check
+    - name: serial number
+      debug: msg='serial number is {{ system_info_json.response.result.system.serial }}'
+
+    # stop playbook if no serial number found
+    - name: firewall without a serial number
+      fail: msg="stop - VM-series firewall missing serial number and unlicensed"
+      when: system_info_json.response.result.system.serial == 'Unknown'
+
+    # fetch license info
+    - name: fetch license info
+      panos_op:
+        provider: '{{ provider }}'
+        cmd: 'request license fetch'
+      register: license_info
+      until: license_info is not failed
+      retries: 10
+      delay: 10
+
+    # show license info
+    - name: show license info
+      panos_op:
+        provider: '{{ provider }}'
+        cmd: 'request license info'
+      register: license_info
+      until: license_info is not failed
+      retries: 10
+      delay: 10
+
+    # json to dict to use in multiple places
+    - set_fact: license_info_json="{{ license_info.stdout | from_json }}"
+
+    # debug output for the current skillet_vars values
+    - name: debug skillet_vars
+      debug: msg="skillet vars are {{ skillet_vars }}"
+
+    # remove directory to ensure a clean load
+    - name: Recursively remove skillet directory
+      file:
+        path: '{{ playbook_dir }}/files/skillets'
+        state: absent
+
+    # create the skillet file directory
+    - name: Create skillet directory if it does not exist
+      file:
+        path: '{{ playbook_dir }}/files/skillets'
+        state: directory
+        mode: '0755'
+
+    # download and store the skillet file
+    - name: Store store skillet file in files/cdl_global_config_xml_snippets
+      get_url:
+        url: https://github.com/PaloAltoNetworks/HomeSkillet/tree/master/panos_HomeSkillet_step1_base/v10.0/*
+        validate_certs: no
+        dest: '{{ playbook_dir }}/files/skillets/'

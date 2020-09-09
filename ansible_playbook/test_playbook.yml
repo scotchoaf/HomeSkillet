@@ -1,0 +1,38 @@
+- name: cdl_content
+  hosts: all
+  connection: local
+  gather_facts: False
+
+  collections:
+    - paloaltonetworks.panos
+    - nembery.skillet
+
+  tasks:
+    # currently using clear text vars for testing
+    - name: grab auth creds
+      include_vars: 'vars.yml'
+      no_log: 'yes'
+
+    # debug output for the current skillet_vars values
+    - name: debug skillet_vars
+      debug: msg="skillet vars are {{ skillet_vars }}"
+
+    # remove directory to ensure a clean load
+    - name: Recursively remove skillet directory
+      file:
+        path: '{{ playbook_dir }}/files/skillets'
+        state: absent
+
+    # create the skillet file directory
+    - name: Create skillet directory if it does not exist
+      file:
+        path: '{{ playbook_dir }}/files/skillets'
+        state: directory
+        mode: '0755'
+
+    # download and store the skillet file
+    - name: Store store skillet file in files/cdl_global_config_xml_snippets
+      get_url:
+        url: https://github.com/PaloAltoNetworks/HomeSkillet/tree/master/panos_HomeSkillet_step1_base/v10.0/*
+        validate_certs: no
+        dest: '{{ playbook_dir }}/files/skillets/'

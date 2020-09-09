@@ -1,0 +1,300 @@
+- name: cdl_content
+  hosts: all
+  connection: local
+  gather_facts: False
+
+  collections:
+    - paloaltonetworks.panos
+    - nembery.skillet
+
+  tasks:
+    # currently using clear text vars for testing
+    - name: grab auth creds
+      include_vars: 'vars.yml'
+      no_log: 'yes'
+
+    - name: Ensure deps are available
+      # Ensure we have all the right requirements installed in this environment
+      pip:
+        name:
+          - pan-python
+          - pandevice
+          - xmltodict
+          - requests
+          - requests_toolbelt
+          - skilletlib
+
+    - name: remove panos-logging-skillets files - latest updates pulled later in playbook
+      file:
+        path: '{{ playbook_dir }}/files/panos-logging-skillets'
+        state: absent
+
+    # check access to the system and pull a few values
+    - name: show system info
+      panos_op:
+        provider: '{{ provider }}'
+        cmd: 'show system info'
+      register: system_info
+      until: system_info is not failed
+      retries: 10
+      delay: 10
+
+    # json to dict to use in multiple places
+    - set_fact: system_info_json="{{ system_info.stdout | from_json }}"
+
+    # output software version for min version check
+    - name: software version
+      debug: msg='software version is {{ system_info_json.response.result.system['sw-version'] }}'
+
+    # stop playbook if sw version before 9.0.6
+    # this IS NOT working when using >= so have <= during testing until resolved - appears as reverse logic
+    - name: firewall version with CDL onboarding support
+      fail: msg="stop - NGFW sw version must be 9.0.6 or later"
+      when: system_info_json.response.result.system['sw-version'] is version('9.0.6', '<=')
+
+    # check serial number; may be used in vm-series testing as licensing check
+    - name: serial number
+      debug: msg='serial number is {{ system_info_json.response.result.system.serial }}'
+
+    # stop playbook if no serial number found
+    - name: firewall without a serial number
+      fail: msg="stop - VM-series firewall missing serial number and unlicensed"
+      when: system_info_json.response.result.system.serial == 'Unknown'
+
+    # fetch license info
+    - name: fetch license info
+      panos_op:
+        provider: '{{ provider }}'
+        cmd: 'request license fetch'
+      register: license_info
+      until: license_info is not failed
+      retries: 10
+      delay: 10
+
+    # show license info
+    - name: show license info
+      panos_op:
+        provider: '{{ provider }}'
+        cmd: 'request license info'
+      register: license_info
+      until: license_info is not failed
+      retries: 10
+      delay: 10
+
+    # json to dict to use in multiple places
+    - set_fact: license_info_json="{{ license_info.stdout | from_json }}"
+
+    # create list var for the logging service license expired status
+    - set_fact: |
+        logging_svc_license_expired="{{ license_info_json.response.result.licenses | json_query(\"entry[?feature=='Logging Service'].expired\") }}"
+
+    # create list var for the logging service license expires date
+    - set_fact: |
+        logging_svc_license_expires="{{ license_info_json.response.result.licenses | json_query(\"entry[?feature=='Logging Service'].expires\") }}"
+
+    # show logging service expires date
+    - name: show logging license end date
+      debug: msg='logging servicd license expires {{ logging_svc_license_expires[0] }}'
+
+    # stop playbook if license not present or expired
+    - name: stop - logging service license expired
+      fail: msg="logging service license missing or expired"
+      when: '"no" not in logging_svc_license_expired'
+
+    # this is a greenfield playbook adding a new cert so delete existing cert if exists
+    - name: delete cdl certificate
+      panos_op:
+        provider: '{{ provider }}'
+        cmd: 'request logging-service-forwarding certificate delete'
+      register: cdl_delete_response
+      until: cdl_delete_response is not failed
+      retries: 2
+      delay: 5
+      ignore_errors: True
+
+    # debug output to show cert delete message
+    - name: delete cdl cert response
+      debug: msg='{{ (cdl_delete_response.stdout | from_json).response.result }}'
+      when: cdl_delete_response.stdout is defined
+
+    # fetch new certificate using input preshared key (psk)
+    - name: fetch cdl certificate
+      panos_op:
+        provider: '{{ provider }}'
+        cmd: 'request logging-service-forwarding certificate fetch-noproxy pre-shared-key {{ cdl_psk }}'
+      register: cdl_fetch_response
+      until: cdl_fetch_response is not failed
+      retries: 10
+      delay: 10
+
+    # debug output to show full response with job id
+    - name: fetch cdl cert response
+      debug: msg='{{ (cdl_fetch_response.stdout | from_json).response.result }}'
+
+    # capture the job id as variable
+    - set_fact:
+        cdl_fetch_job="{{ ((cdl_fetch_response.stdout | from_json).response.result) | regex_search(regexp) }}"
+      vars:
+        regexp: '(\d+)'
+
+    # check job status until FIN state
+    - name: Check cdl fetch result
+      panos_op:
+        provider: '{{ provider }}'
+        cmd: 'show jobs id {{ cdl_fetch_job }}'
+      register: cdl_job_status
+      until: |
+        cdl_job_status is not failed
+        and (cdl_job_status.stdout | from_json).response.result.job.status == 'FIN'
+      retries: 10
+      delay: 10
+
+    # output of the full json job status
+    - name: cdl job status result
+      debug: msg='{{ cdl_job_status.stdout }}'
+
+    # check job result and end playbook if not OK
+    - name: check cdl fetch job is OK
+      fail: msg="stop - Error fetching CDL certificate per job id {{ cdl_fetch_job }}. Check that PSK current and firewall can access logging service."
+      when: (cdl_job_status.stdout | from_json).response.result.job.result != 'OK'
+
+    - name: show cert info
+      panos_op:
+        provider: '{{ provider }}'
+        cmd: 'request logging-service-forwarding certificate info'
+      register: cdl_cert_info
+      until: cdl_cert_info is not failed
+      retries: 10
+      delay: 10
+
+    # full response output as text response for testing and debug
+    - name: cdl cert info response
+      debug: msg='{{ cdl_cert_info.stdout }}'
+
+    - set_fact: cdl_cert_chain_status="{{ cdl_cert_info.stdout | regex_search(regexp,'\\1') }}"
+      vars:
+        regexp: "Certificate chain verification: (..)"
+
+    # full response output as text response for testing and debug
+    - name: cdl cert chain verification
+      debug: msg='{{ cdl_cert_chain_status }}'
+
+    # check job result and end playbook if not OK
+    - name: check cdl chain verification is OK
+      fail: msg="stop - Chain verification is not OK"
+      when: '"OK" not in cdl_cert_chain_status'
+
+    # fetch CDL customer info including region value
+    - name: fetch customer info including region
+      panos_op:
+        provider: '{{ provider }}'
+        cmd: 'request logging-service-forwarding customerinfo fetch'
+      register: cdl_customer_response
+      until: cdl_customer_response is not failed
+      retries: 10
+      delay: 10
+
+    # full response output as text response for testing and debug
+    - name: cdl customer fetch response
+      debug: msg='{{ cdl_customer_response.stdout }}'
+
+    # check CDL customer fetch successful and exit if fails
+    - name: check cdl customer region fetch is successful
+      fail: msg="stop - unable to fetch CDL region"
+      when: (cdl_customer_response.stdout | from_json).response.result != 'Successfully fetch Logging Service region info'
+
+    - name: capture CDL region value
+      panos_op:
+        provider: '{{ provider }}'
+        cmd: 'request logging-service-forwarding customerinfo show'
+      register: cdl_customerinfo_response
+      until: cdl_customerinfo_response is not failed
+      retries: 10
+      delay: 10
+
+    # full response output for testing and debug
+    - name: cdl customerinfo response
+      debug: msg='{{ cdl_customerinfo_response.stdout }}'
+
+    # create region variable to be used in CDL global configuration
+    - set_fact: cdl_customer_region="{{ (cdl_customerinfo_response.stdout | from_json).response.result.custinfo.entry['region-name'] }}"
+
+    # parsed output to show region found
+    - name: cdl customer region
+      debug: msg='customer region is {{ cdl_customer_region }}'
+
+    # end if no region found
+    - name: check cdl customer region fetch is successful
+      fail: msg="stop - no region found"
+      when: cdl_customer_region | length == 0
+
+    # update skillet_var dict with licensed customer region
+    - set_fact:
+        skillet_vars: "{{ skillet_vars | combine({'cdl_region': cdl_customer_region }) }}"
+
+    # debug output for the current skillet_vars values
+    - name: debug skillet_vars
+      debug: msg="skillet vars are {{ skillet_vars }}"
+
+    # remove directory to ensure a clean load
+    - name: Recursively remove skillet directory
+      file:
+        path: '{{ playbook_dir }}/files/skillets'
+        state: absent
+
+    # create the skillet file directory
+    - name: Create skillet directory if it does not exist
+      file:
+        path: '{{ playbook_dir }}/files/skillets'
+        state: directory
+        mode: '0755'
+
+    # download and store the skillet file
+    - name: Store store skillet file in files/cdl_global_config_xml_snippets
+      get_url:
+        url: https://raw.githubusercontent.com/PaloAltoNetworks/panos-logging-skillets/master/cdl_global_config_xml_snippets/.meta-cnc.yaml
+        validate_certs: no
+        dest: '{{ playbook_dir }}/files/cdl_global_config_xml_snippets/.meta-cnc.yaml'
+
+    # play the named skillet to configure fw elements
+    - name: play cdl global config skillet
+      panos_skillet:
+        skillet_path: '{{ playbook_dir }}/files/cdl_global_config_xml_snippets'
+        skillet: '{{ skillet }}'
+        provider: '{{ provider }}'
+        vars: '{{ skillet_vars }}'
+      register: skillet_output
+
+    # output of config push
+    - name: dump test output
+      debug:
+        msg: '{{ skillet_output }}'
+
+    # remove directory to ensure a clean load
+    - name: Recursively remove directory
+      file:
+        path: '{{ playbook_dir }}/files/cdl_global_config_xml_snippets'
+        state: absent
+
+    - name: commit config
+      panos_commit:
+        provider: '{{ provider }}'
+
+    # logging status show if firewall active and connected to CDL
+    - name: show logging-status
+      panos_op:
+        provider: '{{ provider }}'
+        cmd: 'show logging-status'
+      register: logging_status
+      #until: logging_status is not failed
+      until: logging_status.stdout | regex_search('is active and connected') == 'is active and connected'
+      retries: 10
+      delay: 10
+
+    # full response output as text response for testing and debug
+    - name: logging status
+      debug: msg='{{ logging_status.stdout }}'
+
+    # cdl is active and connected
+    - name: logging status
+      debug: msg='the device is connected to Cortex Data Lake and ready to forward logs'

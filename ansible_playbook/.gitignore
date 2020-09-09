@@ -1,0 +1,10 @@
+# pycharm and vscode
+.idea/
+.vscode/
+
+# python virtual environments
+env/
+venv/
+
+# files directory
+files/
