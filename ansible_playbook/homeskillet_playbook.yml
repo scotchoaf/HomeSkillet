@@ -45,7 +45,7 @@
     # this IS NOT working when using >= so have <= during testing until resolved - appears as reverse logic
     - name: firewall version with CDL onboarding support
       fail: msg="stop - NGFW sw version must be 9.0.6 or later"
-      when: system_info_json.response.result.system['sw-version'] is version('10.0.0', '<=')
+      when: system_info_json.response.result.system['sw-version'] is version('9.0.6', '<=')
 
     # check serial number; may be used in vm-series testing as licensing check
     - name: serial number
@@ -99,6 +99,20 @@
     # create the skillet file directory
     - name: Create skillet directory if it does not exist
       file:
+        path: '{{ playbook_dir }}/files/skillets/homeskillet/IronSkillet'
+        state: directory
+        mode: '0755'
+
+    # download and store the L3 network skillet file
+    - name: Store store skillet file in homeskillet/network
+      get_url:
+        url: https://raw.githubusercontent.com/scotchoaf/HomeSkillet/playbook/panos_HomeSkillet_step1_base/v10.0/.meta-cnc.yaml
+        validate_certs: no
+        dest: '{{ playbook_dir }}/files/skillets/homeskillet/IronSkillet'
+
+      # create the skillet file directory
+    - name: Create skillet directory if it does not exist
+      file:
         path: '{{ playbook_dir }}/files/skillets/homeskillet/network'
         state: directory
         mode: '0755'
@@ -123,6 +137,15 @@
         url: https://raw.githubusercontent.com/scotchoaf/HomeSkillet/playbook/panos_HomeSkillet_policies/.meta-cnc.yaml
         validate_certs: no
         dest: '{{ playbook_dir }}/files/skillets/homeskillet/policies'
+
+    # play the named skillet to configure fw elements
+    - name: play IronSkillet config skillet
+      panos_skillet:
+        skillet_path: '{{ playbook_dir }}/files/skillets/homeskillet/IronSkillet'
+        skillet: '{{ dayOne_skillet }}'
+        provider: '{{ provider }}'
+        vars: '{{ skillet_vars }}'
+      register: skillet_output
 
     # play the named skillet to configure fw elements
     - name: play l3 network config skillet
