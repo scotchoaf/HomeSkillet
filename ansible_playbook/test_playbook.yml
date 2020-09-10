@@ -30,9 +30,58 @@
         state: directory
         mode: '0755'
 
-    # download and store the skillet file
-    - name: Store store skillet file in files/cdl_global_config_xml_snippets
+    # create the skillet file directory
+    - name: Create skillet directory if it does not exist
+      file:
+        path: '{{ playbook_dir }}/files/skillets/homeskillet/network'
+        state: directory
+        mode: '0755'
+
+    # download and store the L3 network skillet file
+    - name: Store store skillet file in homeskillet/network
       get_url:
-        url: https://github.com/PaloAltoNetworks/HomeSkillet/tree/master/panos_HomeSkillet_step1_base/v10.0/*
+        url: https://raw.githubusercontent.com/scotchoaf/HomeSkillet/playbook/panos_HomeSkillet_network_L3/.meta-cnc.yaml
         validate_certs: no
-        dest: '{{ playbook_dir }}/files/skillets/'
+        dest: '{{ playbook_dir }}/files/skillets/homeskillet/network'
+
+    # create the skillet file directory
+    - name: Create skillet directory if it does not exist
+      file:
+        path: '{{ playbook_dir }}/files/skillets/homeskillet/policies'
+        state: directory
+        mode: '0755'
+
+    # download and store the policy skillet file
+    - name: Store store skillet file in homeskillet/policies
+      get_url:
+        url: https://raw.githubusercontent.com/scotchoaf/HomeSkillet/playbook/panos_HomeSkillet_policies/.meta-cnc.yaml
+        validate_certs: no
+        dest: '{{ playbook_dir }}/files/skillets/homeskillet/policies'
+
+    # play the named skillet to configure fw elements
+    - name: play l3 network config skillet
+      panos_skillet:
+        skillet_path: '{{ playbook_dir }}/files/skillets/homeskillet/network'
+        skillet: '{{ network_skillet }}'
+        provider: '{{ provider }}'
+        vars: '{{ skillet_vars }}'
+      register: skillet_output
+
+    # output of config push
+    - name: dump test output
+      debug:
+        msg: '{{ skillet_output }}'
+
+    # play the named skillet to configure fw elements
+    - name: play policy config skillet
+      panos_skillet:
+        skillet_path: '{{ playbook_dir }}/files/skillets/homeskillet/policies'
+        skillet: '{{ policy_skillet }}'
+        provider: '{{ provider }}'
+        vars: '{{ skillet_vars }}'
+      register: skillet_output
+
+    # output of config push
+    - name: dump test output
+      debug:
+        msg: '{{ skillet_output }}'

@@ -1,14 +1,15 @@
 # clear text test var
 provider:
-    ip_address: '192.168.55.136'
+    ip_address: '192.168.55.168'
     username: 'admin'
-    password: 'Clouds123'
+    password: 'Paloalto1'
 
 # skillet repo content for the playbook
 # for reference only as pointer to skillet content
 skillet_repo: 'https://github.com/PaloAltoNetworks/panos-logging-skillets.git'
 branch: 'master'
-skillet: 'cdl_global_config_panos_xml'
+network_skillet: 'homeskillet_L3network_panos_v10_aae24a56-b4fc-4387-abc5-6694db5f49ee'
+policy_skillet: 'homeskillet_policies_panos_v10_466aeb8c-64a7-4aa5-acab-58cc6402f648'
 
 # vars passed to the skillet
 skillet_vars:
